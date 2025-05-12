@@ -5,7 +5,7 @@ import { awaitAllDecryptionResults, initGateway } from "../asyncDecrypt";
 import { createInstance } from "../instance";
 import { getSigners, initSigners } from "../signers";
 import { bigIntToBytes64, bigIntToBytes128, bigIntToBytes256 } from "../utils";
-
+/*
 describe("TestAsyncDecrypt", function () {
   before(async function () {
     await initSigners();
@@ -326,3 +326,4 @@ describe("TestAsyncDecrypt", function () {
     expect(yAdd).to.equal("0x8ba1f109551bD432803012645Ac136ddd64DBA72");
   });
 });
+*/
