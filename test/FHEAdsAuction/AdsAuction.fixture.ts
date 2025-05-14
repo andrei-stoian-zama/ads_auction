@@ -1,8 +1,11 @@
 import { ethers } from "hardhat";
+import { expect } from "chai";
 
-import type { AdsAuction, MyConfidentialERC20 } from "../../types";
+import type { AdsAuction, ConfidentialERC20, MyConfidentialERC20 } from "../../types";
 import { getSigners } from "../signers";
 import { AddressLike } from "ethers";
+import { FhevmInstance } from "fhevmjs/node";
+import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
 
 export async function deployConfidentialERC20Fixture(): Promise<MyConfidentialERC20> {
@@ -24,4 +27,60 @@ export async function deployFheAds(erc20: AddressLike): Promise<AdsAuction> {
   const adsAuctionInst = await adsAuctionFactory.connect(deployer).deploy(deployer.address, erc20) as AdsAuction;
 
   return adsAuctionInst;
+}
+
+
+export async function mintAndAllow(fhevm: FhevmInstance, erc20: MyConfidentialERC20, erc20Addr: string, bidContractAddr: string, owner: HardhatEthersSigner, amount: number) {
+
+
+    // Mint with Alice account
+    const tx1 = await erc20.mint(owner, amount);
+    tx1.wait();
+
+    const amountAliceBids = fhevm.createEncryptedInput(erc20Addr, owner.address);
+    amountAliceBids.add64(amount);
+    const encryptedAllowanceAmount = await amountAliceBids.encrypt();
+
+    const txApprove = await erc20.connect(owner)["approve(address,bytes32,bytes)"](
+      bidContractAddr,
+      encryptedAllowanceAmount.handles[0],
+      encryptedAllowanceAmount.inputProof,
+    );
+
+    await expect(txApprove)
+      .to.emit(erc20, "Approval");
+
+}
+
+export async function bidAndDeposit(fhevm: FhevmInstance, bidContract: AdsAuction, bidContractAddr: string, owner: HardhatEthersSigner, weight1: number, weight2: number, weight3: number, amount: number) {
+
+  const input1 = fhevm.createEncryptedInput(bidContractAddr, owner.address);
+  input1.add64(weight1);
+  const encryptedInput1 = await input1.encrypt();
+
+  const input2 = fhevm.createEncryptedInput(bidContractAddr, owner.address);
+  input2.add64(weight2);
+  const encryptedInput2 = await input2.encrypt();
+
+  const input3 = fhevm.createEncryptedInput(bidContractAddr, owner.address);
+  input3.add64(weight3);
+  const encryptedInput3 = await input3.encrypt();
+
+  const input4 = fhevm.createEncryptedInput(bidContractAddr, owner.address);
+  input4.add64(amount);
+  const encryptedInput4 = await input4.encrypt();
+  
+  const tx = await bidContract["bid(bytes32,bytes,bytes32,bytes,bytes32,bytes,bytes32,bytes)"](
+    encryptedInput1.handles[0],
+    encryptedInput1.inputProof,
+    encryptedInput2.handles[0],
+    encryptedInput2.inputProof,
+    encryptedInput3.handles[0],
+    encryptedInput3.inputProof,
+    encryptedInput4.handles[0],
+    encryptedInput4.inputProof,
+  );
+  const t2 = await tx.wait();
+  expect(t2?.status).to.eq(1);
+
 }
