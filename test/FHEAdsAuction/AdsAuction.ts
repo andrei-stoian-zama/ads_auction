@@ -5,7 +5,7 @@ import { createInstance } from "../instance";
 import { reencryptEuint64 } from "../reencrypt";
 import { getSigners, initSigners } from "../signers";
 import { debug } from "../utils";
-import { deployFheAds, deployConfidentialERC20Fixture, mintAndAllow, bidAndDeposit} from "./AdsAuction.fixture";
+import { deployFheAds, deployConfidentialERC20Fixture, mintAndAllow, bidAndDeposit, getAd} from "./AdsAuction.fixture";
 
 describe("AdsAuction", function () {
   before(async function () {
@@ -32,7 +32,9 @@ describe("AdsAuction", function () {
     
     // Both Alice and Bob deposit 10 000 and set up bid rules
     await bidAndDeposit(this.fhevm, this.adBidContract, this.contractAddress, this.signers.alice, 1000, 1000, 1000, 10000);
-    //await bidAndDeposit(this.fhevm, this.adBidContract, this.contractAddress, this.signers.bob, 2000, 1000, 5000, 10000);
+    await bidAndDeposit(this.fhevm, this.adBidContract, this.contractAddress, this.signers.bob, 2000, 1000, 5000, 10000);
+
+    const idWinner1 = await getAd(this.fhevm, this.adBidContract, this.contractAddress, this.signers.carol, 1, 1, 1);
 
     const aliceBalanceHandle = await this.erc20.balanceOf(this.signers.alice);
     const aliceBalance = await reencryptEuint64(
@@ -51,7 +53,9 @@ describe("AdsAuction", function () {
       bobBalanceHandle,
       this.erc20Address,
     );
-    expect(bobBalance).to.equal(20000);    
+    expect(bobBalance).to.equal(10000);    
+
+    expect(idWinner1).to.hexEqual(this.signers.bob.address);
   });
 
   it("should accept two bids", async function () {

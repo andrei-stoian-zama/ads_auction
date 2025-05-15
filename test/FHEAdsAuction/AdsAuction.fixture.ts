@@ -4,6 +4,8 @@ import { expect } from "chai";
 import type { AdsAuction, ConfidentialERC20, MyConfidentialERC20 } from "../../types";
 import { getSigners } from "../signers";
 import { AddressLike } from "ethers";
+import { reencryptEaddress, reencryptEuint256, reencryptEuint64 } from "../reencrypt";
+
 import { FhevmInstance } from "fhevmjs/node";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
@@ -70,7 +72,7 @@ export async function bidAndDeposit(fhevm: FhevmInstance, bidContract: AdsAuctio
   input4.add64(amount);
   const encryptedInput4 = await input4.encrypt();
   
-  const tx = await bidContract["bid(bytes32,bytes,bytes32,bytes,bytes32,bytes,bytes32,bytes)"](
+  const tx = await bidContract.connect(owner)["bid(bytes32,bytes,bytes32,bytes,bytes32,bytes,bytes32,bytes)"](
     encryptedInput1.handles[0],
     encryptedInput1.inputProof,
     encryptedInput2.handles[0],
@@ -83,4 +85,44 @@ export async function bidAndDeposit(fhevm: FhevmInstance, bidContract: AdsAuctio
   const t2 = await tx.wait();
   expect(t2?.status).to.eq(1);
 
+}
+
+export async function getAd(fhevm: FhevmInstance, bidContract: AdsAuction, bidContractAddr: string, requester: HardhatEthersSigner, weight1: number, weight2: number, weight3: number): Promise<bigint> {
+ 
+  const input1 = fhevm.createEncryptedInput(bidContractAddr, requester.address);
+  input1.add64(weight1);
+  const encryptedInput1 = await input1.encrypt();
+
+  const input2 = fhevm.createEncryptedInput(bidContractAddr, requester.address);
+  input2.add64(weight2);
+  const encryptedInput2 = await input2.encrypt();
+
+  const input3 = fhevm.createEncryptedInput(bidContractAddr, requester.address);
+  input3.add64(weight3);
+  const encryptedInput3 = await input3.encrypt();
+
+
+  const tx = await bidContract.connect(requester).computeAdProvider(
+    encryptedInput1.handles[0],
+    encryptedInput1.inputProof,
+    encryptedInput2.handles[0],
+    encryptedInput2.inputProof,
+    encryptedInput3.handles[0],
+    encryptedInput3.inputProof,
+  );
+  const t2 = await tx.wait();
+  expect(t2?.status).to.eq(1);
+
+  const adProviderIdHandle = await bidContract.connect(requester).getAdProvider();
+
+  console.log(typeof adProviderIdHandle);
+
+  const adProviderId = await reencryptEaddress(
+    requester,
+    fhevm,
+    adProviderIdHandle,
+    bidContractAddr,
+  );
+
+  return adProviderId;
 }

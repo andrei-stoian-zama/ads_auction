@@ -36,6 +36,9 @@ contract AdsAuction is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gateway
     /// @notice Mapping from bidder to their bid value
     mapping(address account => AdBid bidRules) private bidRules;
 
+    /// @notice Mapping from bidder to their bid value
+    mapping(address account => eaddress bidWinner) private bidWinners;
+
     /// @notice List of ad providers
     address[] public adProviderAddresses;
 
@@ -100,10 +103,16 @@ contract AdsAuction is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gateway
         einput depositAmount, 
         bytes calldata depositProof) external {
         
-        bidRules[msg.sender] = AdBid(TFHE.asEuint64(profileWeight1, inputProof1),
+        AdBid memory bidData = AdBid(TFHE.asEuint64(profileWeight1, inputProof1),
                                         TFHE.asEuint64(profileWeight2, inputProof2),
                                     TFHE.asEuint64(profileWeight3, inputProof3));
         
+        TFHE.allowThis(bidData.weightAgeGroup1);
+        TFHE.allowThis(bidData.weightAgeGroup2);
+        TFHE.allowThis(bidData.weightGenderM);
+
+        bidRules[msg.sender] = bidData;
+
         euint64 depositEncrypted = TFHE.asEuint64(depositAmount, depositProof);
 
         euint64 currentDeposit = deposits[msg.sender];
@@ -126,91 +135,40 @@ contract AdsAuction is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gateway
         if (!exists) {
             adProviderAddresses.push(msg.sender);
         }
-
-        /*
-        euint64 sentBalance;
-        if (TFHE.isInitialized(existingBid)) {
-            euint64 balanceBefore = tokenContract.balanceOf(address(this));
-            ebool isHigher = TFHE.lt(existingBid, value);
-            euint64 toTransfer = TFHE.sub(value, existingBid);
-
-            // Transfer only if bid is higher, also to avoid overflow from previous line
-            euint64 amount = TFHE.select(isHigher, toTransfer, TFHE.asEuint64(0));
-            TFHE.allowTransient(amount, address(tokenContract));
-            tokenContract.transferFrom(msg.sender, address(this), amount);
-
-            euint64 balanceAfter = tokenContract.balanceOf(address(this));
-            sentBalance = TFHE.sub(balanceAfter, balanceBefore);
-            euint64 newBid = TFHE.add(existingBid, sentBalance);
-            bids[msg.sender] = newBid;
-        } else {
-            bidCounter++;
-            euint64 balanceBefore = tokenContract.balanceOf(address(this));
-            TFHE.allowTransient(value, address(tokenContract));
-            tokenContract.transferFrom(msg.sender, address(this), value);
-            euint64 balanceAfter = tokenContract.balanceOf(address(this));
-            sentBalance = TFHE.sub(balanceAfter, balanceBefore);
-            bids[msg.sender] = sentBalance;
-        }
-        euint64 currentBid = bids[msg.sender];
-        TFHE.allowThis(currentBid);
-        TFHE.allow(currentBid, msg.sender);
-
-        euint256 randTicket = TFHE.randEuint256();
-        euint256 userTicket;
-        if (TFHE.isInitialized(highestBid)) {
-            if (TFHE.isInitialized(userTickets[msg.sender])) {
-                userTicket = TFHE.select(TFHE.ne(sentBalance, 0), randTicket, userTickets[msg.sender]); // don't update ticket if sentBalance is null (or else winner sending an additional zero bid would lose the prize)
-            } else {
-                userTicket = TFHE.select(TFHE.ne(sentBalance, 0), randTicket, TFHE.asEuint256(0));
-            }
-        } else {
-            userTicket = randTicket;
-        }
-        userTickets[msg.sender] = userTicket;
-
-        if (!TFHE.isInitialized(highestBid)) {
-            highestBid = currentBid;
-            winningTicket = userTicket;
-        } else {
-            ebool isNewWinner = TFHE.lt(highestBid, currentBid);
-            highestBid = TFHE.select(isNewWinner, currentBid, highestBid);
-            winningTicket = TFHE.select(isNewWinner, userTicket, winningTicket);
-        }
-        TFHE.allowThis(highestBid);
-        TFHE.allowThis(winningTicket);
-        TFHE.allowThis(userTicket);
-        TFHE.allow(userTicket, msg.sender);
-        */
     }
 
-    function getAds(einput[] calldata encryptedProfile, bytes[] calldata inputProof) external returns (euint64) {
+    function computeAdProvider(einput profileWeight1, 
+        bytes calldata inputProof1, 
+        einput profileWeight2, 
+        bytes calldata inputProof2, 
+        einput profileWeight3, 
+        bytes calldata inputProof3) external {
 
-        euint64[] memory profile = new euint64[](encryptedProfile.length);
+        AdBid memory userProfile = AdBid(TFHE.asEuint64(profileWeight1, inputProof1),
+                                TFHE.asEuint64(profileWeight2, inputProof2),
+                                TFHE.asEuint64(profileWeight3, inputProof3));
 
-        for (uint256 i = 0; i < encryptedProfile.length; i++) {
-            profile[i] = TFHE.asEuint64(encryptedProfile[i], inputProof[i]);
+        euint64 bestBid = TFHE.asEuint64(0);
+        eaddress bestBidToken = TFHE.asEaddress(address(0));
+
+        for (uint256 i = 0; i < adProviderAddresses.length; i++) {
+            AdBid memory bidRule_i = bidRules[adProviderAddresses[i]];
+            
+            euint64 bids_i = TFHE.asEuint64(0);
+
+            bids_i = TFHE.add(bids_i, TFHE.mul(userProfile.weightAgeGroup1, bidRule_i.weightAgeGroup1));
+            bids_i = TFHE.add(bids_i, TFHE.mul(userProfile.weightAgeGroup2, bidRule_i.weightAgeGroup2));
+            bids_i = TFHE.add(bids_i, TFHE.mul(userProfile.weightGenderM, bidRule_i.weightGenderM));
+
+            ebool isHigher = TFHE.gt(bids_i, bestBid);
+            
+            bestBid = TFHE.select(isHigher, bids_i, bestBid);
+            bestBidToken = TFHE.select(isHigher, TFHE.asEaddress(adProviderAddresses[i]), bestBidToken);
         }
-
-        euint64[] memory bids = new euint64[](adProviderAddresses.length);
-
-/*        for (uint256 i = 0; i < adProviderAddresses.length; i++) {
-            bids[i] = TFHE.asEuint64(0);
-            euint64[] memory bidRule_i = bidRules[adProviderAddresses[i]];
-            for (uint256 j = 0; j < encryptedProfile.length; j++) {
-                bids[i] = TFHE.add(TFHE.mul(profile[j], bidRule_i[j]), bids[i]);
-            }
-        }*/
         
-        return bids[0];
-    }
-
-    /// @notice Get the encrypted ticket of a specific account
-    /// @dev Can be used in a reencryption request
-    /// @param account The address of the bidder
-    /// @return The encrypted ticket
-    function ticketUser(address account) external view returns (euint256) {
-        return userTickets[account];
+        bidWinners[msg.sender] = bestBidToken;
+        TFHE.allowThis(bidWinners[msg.sender]);
+        TFHE.allow(bidWinners[msg.sender], msg.sender);
     }
 
 /*    /// @notice Initiate the decryption of the winning ticket
@@ -231,9 +189,8 @@ contract AdsAuction is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gateway
     /// @notice Get the decrypted winning ticket
     /// @dev Can only be called after the winning ticket has been decrypted - if `userTickets[account]` is an encryption of decryptedWinningTicket, then `account` won and can call `claim` succesfully
     /// @return The decrypted winning ticket
-    function getDecryptedWinningTicket() external view returns (uint256) {
-        require(decryptedWinningTicket != 0, "Winning ticket has not been decrypted yet");
-        return decryptedWinningTicket;
+    function getAdProvider() external view returns (eaddress) {        
+        return bidWinners[msg.sender];
     }
 
 /*
