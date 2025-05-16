@@ -45,7 +45,6 @@ describe("AdsAuction", function () {
     );
     expect(aliceBalance).to.equal(0);
 
-
     const bobBalanceHandle = await this.erc20.balanceOf(this.signers.bob);
     const bobBalance = await reencryptEuint64(
       this.signers.bob,
@@ -56,13 +55,29 @@ describe("AdsAuction", function () {
     expect(bobBalance).to.equal(10000);    
 
     expect(idWinner1).to.hexEqual(this.signers.bob.address);
-  });
 
-  it("should accept two bids", async function () {
+    await this.adBidContract.connect(this.signers.alice).withdraw();
 
-    // Mint with Alice account
-    const tx1 = await this.erc20.mint(this.signers.alice, 10000);
-    tx1.wait();
+    const aliceBalanceHandle2 = await this.erc20.balanceOf(this.signers.alice);
+    const aliceBalance2 = await reencryptEuint64(
+      this.signers.alice,
+      this.fhevm,
+      aliceBalanceHandle2,
+      this.erc20Address,
+    );
+    expect(aliceBalance2).to.equal(10000);
+
+    await this.adBidContract.connect(this.signers.bob).withdraw();
+
+    const bobBalanceHandle2 = await this.erc20.balanceOf(this.signers.bob);
+    const bobBalance2 = await reencryptEuint64(
+      this.signers.bob,
+      this.fhevm,
+      bobBalanceHandle2,
+      this.erc20Address,
+    );
+    expect(bobBalance2).to.equal(12000);    
+
   });
 
 });

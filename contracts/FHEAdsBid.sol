@@ -11,18 +11,8 @@ import "fhevm/gateway/GatewayCaller.sol";
 
 /// @notice Main contract for the blind auction
 contract AdsAuction is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, GatewayCaller, Ownable2Step {
-    /// @notice Auction end time
-    uint256 public endTime;
-
-    /// @notice Address of the beneficiary
-    address public beneficiary;
-
     /// @notice Mapping from bidder to their bid value
     mapping(address account => euint64 depositAmount) private deposits;
-
-    /// @notice Decryption of winningTicket
-    /// @dev Can be requested by anyone after auction ends
-    uint256 private decryptedWinningTicket;
 
     /// @notice Ticket randomly sampled for each user
     mapping(address account => euint256 ticket) private userTickets;
@@ -45,40 +35,14 @@ contract AdsAuction is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gateway
     /// @notice The token contract used for encrypted bids
     ConfidentialERC20 public tokenContract;
 
-    /// @notice Flag indicating whether the auction object has been claimed
-    /// @dev WARNING : If there is a draw, only the first highest bidder will get the prize
-    ///      An improved implementation could handle this case differently
-    ebool private objectClaimed;
-
-    /// @notice Flag to check if the token has been transferred to the beneficiary
-    bool public tokenTransferred;
-
-    /// @notice Flag to determine if the auction can be stopped manually
-    bool public stoppable;
-
-    /// @notice Flag to check if the auction has been manually stopped
-    bool public manuallyStopped = false;
-
-    /// @notice Error thrown when a function is called too early
-    /// @dev Includes the time when the function can be called
-    error TooEarly(uint256 time);
-
-    /// @notice Error thrown when a function is called too late
-    /// @dev Includes the time after which the function cannot be called
-    error TooLate(uint256 time);
-
     /// @notice Constructor to initialize the auction
-    /// @param _beneficiary Address of the beneficiary who will receive the highest bid
     /// @param _tokenContract Address of the ConfidentialERC20 token contract used for bidding
     constructor(
-        address _beneficiary,
         ConfidentialERC20 _tokenContract
     ) Ownable(msg.sender) {
         // TFHE.setFHEVM(FHEVMConfig.defaultConfig());
         // Gateway.setGateway(GatewayConfig.defaultGatewayContract());
-        beneficiary = _beneficiary;
         tokenContract = _tokenContract;
-        tokenTransferred = false;
     }
 
 
@@ -103,6 +67,7 @@ contract AdsAuction is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gateway
         einput depositAmount, 
         bytes calldata depositProof) external {
         
+
         AdBid memory bidData = AdBid(TFHE.asEuint64(profileWeight1, inputProof1),
                                         TFHE.asEuint64(profileWeight2, inputProof2),
                                     TFHE.asEuint64(profileWeight3, inputProof3));
@@ -111,19 +76,20 @@ contract AdsAuction is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gateway
         TFHE.allowThis(bidData.weightAgeGroup2);
         TFHE.allowThis(bidData.weightGenderM);
 
-        bidRules[msg.sender] = bidData;
+        bidRules[msg.sender] = bidData;        
 
         euint64 depositEncrypted = TFHE.asEuint64(depositAmount, depositProof);
+
+        TFHE.allowTransient(depositEncrypted, address(tokenContract));
+        tokenContract.transferFrom(msg.sender, address(this), depositEncrypted);
 
         euint64 currentDeposit = deposits[msg.sender];
         if (TFHE.isInitialized(currentDeposit)) {
             deposits[msg.sender] = TFHE.add(currentDeposit, depositEncrypted);
         } else {
             deposits[msg.sender] = depositEncrypted;
+            TFHE.allowThis(deposits[msg.sender]);
         }
-
-        TFHE.allowTransient(deposits[msg.sender], address(tokenContract));
-        tokenContract.transferFrom(msg.sender, address(this), deposits[msg.sender]);
 
         bool exists = false;
         for (uint256 i = 0; i < adProviderAddresses.length; i++) {
@@ -135,6 +101,7 @@ contract AdsAuction is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gateway
         if (!exists) {
             adProviderAddresses.push(msg.sender);
         }
+
     }
 
     function computeAdProvider(einput profileWeight1, 
@@ -160,30 +127,21 @@ contract AdsAuction is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gateway
             bids_i = TFHE.add(bids_i, TFHE.mul(userProfile.weightAgeGroup2, bidRule_i.weightAgeGroup2));
             bids_i = TFHE.add(bids_i, TFHE.mul(userProfile.weightGenderM, bidRule_i.weightGenderM));
 
-            ebool isHigher = TFHE.gt(bids_i, bestBid);
+            ebool isHigher = TFHE.and(TFHE.gt(bids_i, bestBid), TFHE.le(bids_i, deposits[adProviderAddresses[i]]));
             
             bestBid = TFHE.select(isHigher, bids_i, bestBid);
             bestBidToken = TFHE.select(isHigher, TFHE.asEaddress(adProviderAddresses[i]), bestBidToken);
         }
         
+        for (uint256 i = 0; i < adProviderAddresses.length; i++) {
+            euint64 debitThisDepositAmount = TFHE.select(TFHE.eq(bestBidToken, adProviderAddresses[i]), bestBid, TFHE.asEuint64(0));
+            deposits[adProviderAddresses[i]] = TFHE.sub(deposits[adProviderAddresses[i]], debitThisDepositAmount);
+            TFHE.allowThis(deposits[adProviderAddresses[i]]);
+        }
+
         bidWinners[msg.sender] = bestBidToken;
         TFHE.allowThis(bidWinners[msg.sender]);
         TFHE.allow(bidWinners[msg.sender], msg.sender);
-    }
-
-/*    /// @notice Initiate the decryption of the winning ticket
-    /// @dev Can only be called after the auction ends
-    function decryptWinningTicket() public onlyAfterEnd {
-        uint256[] memory cts = new uint256[](1);
-        cts[0] = Gateway.toUint256(winningTicket);
-        Gateway.requestDecryption(cts, this.setDecryptedWinningTicket.selector, 0, block.timestamp + 100, false);
-    }*/
-
-    /// @notice Callback function to set the decrypted winning ticket
-    /// @dev Can only be called by the Gateway
-    /// @param resultDecryption The decrypted winning ticket
-    function setDecryptedWinningTicket(uint256, uint256 resultDecryption) public onlyGateway {
-        decryptedWinningTicket = resultDecryption;
     }
 
     /// @notice Get the decrypted winning ticket
@@ -193,32 +151,11 @@ contract AdsAuction is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gateway
         return bidWinners[msg.sender];
     }
 
-/*
-    /// @notice Claim the auction object
-    /// @dev Succeeds only if the caller was the first to get the highest bid
-    function claim() public onlyAfterEnd {
-        ebool canClaim = TFHE.and(TFHE.eq(winningTicket, userTickets[msg.sender]), TFHE.not(objectClaimed));
-        objectClaimed = TFHE.or(canClaim, objectClaimed);
-        TFHE.allowThis(objectClaimed);
-        euint64 newBid = TFHE.select(canClaim, TFHE.asEuint64(0), bids[msg.sender]);
-        bids[msg.sender] = newBid;
-        TFHE.allowThis(bids[msg.sender]);
-        TFHE.allow(bids[msg.sender], msg.sender);
+    function withdraw() external {
+        if (TFHE.isInitialized(deposits[msg.sender])) {
+            TFHE.allow(deposits[msg.sender], address(tokenContract));
+            tokenContract.transfer(msg.sender, deposits[msg.sender]);
+            deposits[msg.sender] = TFHE.asEuint64(0);
+        }
     }
-    */
-/*
-    /// @notice Withdraw a bid from the auction
-    /// @dev Can only be called after the auction ends and by non-winning bidders
-    function withdraw() public onlyAfterEnd {
-        euint64 bidValue = bids[msg.sender];
-        ebool canWithdraw = TFHE.ne(winningTicket, userTickets[msg.sender]);
-        euint64 amount = TFHE.select(canWithdraw, bidValue, TFHE.asEuint64(0));
-        TFHE.allowTransient(amount, address(tokenContract));
-        tokenContract.transfer(msg.sender, amount);
-        euint64 newBid = TFHE.select(canWithdraw, TFHE.asEuint64(0), bids[msg.sender]);
-        bids[msg.sender] = newBid;
-        TFHE.allowThis(newBid);
-        TFHE.allow(newBid, msg.sender);
-    }
-*/
 }

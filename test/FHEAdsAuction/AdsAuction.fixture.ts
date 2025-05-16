@@ -26,7 +26,7 @@ export async function deployFheAds(erc20: AddressLike): Promise<AdsAuction> {
   console.log("Deploying contracts with the account:", deployer.address);
 
   const adsAuctionFactory = await ethers.getContractFactory("AdsAuction");
-  const adsAuctionInst = await adsAuctionFactory.connect(deployer).deploy(deployer.address, erc20) as AdsAuction;
+  const adsAuctionInst = await adsAuctionFactory.connect(deployer).deploy(erc20) as AdsAuction;
 
   return adsAuctionInst;
 }
