@@ -34,6 +34,16 @@ describe("AdsAuction", function () {
     await bidAndDeposit(this.fhevm, this.adBidContract, this.contractAddress, this.signers.alice, 1000, 1000, 1000, 10000);
     await bidAndDeposit(this.fhevm, this.adBidContract, this.contractAddress, this.signers.bob, 2000, 1000, 5000, 10000);
 
+    const aliceDepositHandle = await this.adBidContract.connect(this.signers.alice).getDeposit();
+    const aliceBalanceAmount = await reencryptEuint64(
+      this.signers.alice,
+      this.fhevm,
+      aliceDepositHandle,
+      this.contractAddress,
+    );
+
+    expect(aliceBalanceAmount).to.equal(10000);
+
     const idWinner1 = await getAd(this.fhevm, this.adBidContract, this.contractAddress, this.signers.carol, 1, 1, 1);
 
     const aliceBalanceHandle = await this.erc20.balanceOf(this.signers.alice);
@@ -55,6 +65,15 @@ describe("AdsAuction", function () {
     expect(bobBalance).to.equal(10000);    
 
     expect(idWinner1).to.hexEqual(this.signers.bob.address);
+
+    const bobDepositHandle = await this.adBidContract.connect(this.signers.bob).getDeposit();
+    const bobDepositAmount = await reencryptEuint64(
+      this.signers.bob,
+      this.fhevm,
+      bobDepositHandle,
+      this.contractAddress,
+    );    
+    expect(bobDepositAmount).to.equal(2000);
 
     await this.adBidContract.connect(this.signers.alice).withdraw();
 
